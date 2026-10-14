@@ -1,0 +1,6 @@
+{
+  "name": "Fit Quest",
+  "description": "เว็บแอปบันทึกการออกกำลังกายสำหรับโครงการวิจัยและกิจกรรมส่งเสริมสุขภาพในนักเรียน - ขยับทุกวัน สนุกทุกภารกิจ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

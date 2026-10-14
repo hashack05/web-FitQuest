@@ -1,0 +1,60 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Deny all by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)')
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    function isActiveAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email == 'hack.cvbnm@gmail.com')
+        ||
+        (
+          firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+          && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          && (
+            !('active' in firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data)
+            || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.active != false
+          )
+        )
+        ||
+        (
+          request.auth.token.email != null
+          && firestore.exists(/databases/(default)/documents/users/$(request.auth.token.email))
+          && firestore.get(/databases/(default)/documents/users/$(request.auth.token.email)).data.role == 'admin'
+          && (
+            !('active' in firestore.get(/databases/(default)/documents/users/$(request.auth.token.email)).data)
+            || firestore.get(/databases/(default)/documents/users/$(request.auth.token.email)).data.active != false
+          )
+        )
+      );
+    }
+
+    // Evidence images stored per user: evidence/{uid}/{recordId}/{filename}
+    match /evidence/{uid}/{recordId}/{filename} {
+      // Owner student and authenticated active admin can read
+      allow read: if isSignedIn() && (request.auth.uid == uid || isActiveAdmin());
+      
+      // Only owner student can upload their evidence
+      allow create, update: if isOwner(uid) && isValidImage();
+      
+      // Delete allowed by owner
+      allow delete: if isOwner(uid);
+    }
+  }
+}

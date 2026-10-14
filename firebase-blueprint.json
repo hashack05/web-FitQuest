@@ -1,0 +1,170 @@
+{
+  "entities": {
+    "user": {
+      "title": "User",
+      "description": "Admin and researcher accounts with access to Fit Quest management",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "position": { "type": "string", "enum": ["lead_researcher", "website_admin"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "position", "active", "createdAt", "updatedAt"]
+    },
+    "participant": {
+      "title": "Participant",
+      "description": "Student participant profile in the research project",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "participantId": { "type": "string", "maxLength": 32, "pattern": "^[A-Z0-9_-]+$" },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "classroomId": { "type": "string", "maxLength": 64 },
+        "studentNumber": { "type": "string", "maxLength": 32 },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["uid", "participantId", "displayName", "classroomId", "active", "createdAt", "updatedAt", "createdByUid"]
+    },
+    "exerciseRecord": {
+      "title": "ExerciseRecord",
+      "description": "Physical exercise log submitted by student participants",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "maxLength": 128 },
+        "participantUid": { "type": "string", "maxLength": 128 },
+        "participantId": { "type": "string", "maxLength": 32 },
+        "classroomId": { "type": "string", "maxLength": 64 },
+        "activityType": { "type": "string", "maxLength": 64 },
+        "activityName": { "type": "string", "maxLength": 128 },
+        "exerciseDate": { "type": "string", "maxLength": 32 },
+        "durationMinutes": { "type": "number" },
+        "intensity": { "type": "string", "enum": ["light", "moderate", "vigorous"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "evidenceImages": { "type": "string", "maxLength": 2048 },
+        "status": { "type": "string", "enum": ["draft", "pending", "approved", "needs_revision", "rejected"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewNotes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["participantUid", "participantId", "activityType", "activityName", "exerciseDate", "durationMinutes", "intensity", "status", "createdAt", "updatedAt", "createdByUid"]
+    },
+    "recordComment": {
+      "title": "RecordComment",
+      "description": "Feedback and discussion comments on exercise records between admin and student",
+      "type": "object",
+      "properties": {
+        "commentId": { "type": "string", "maxLength": 128 },
+        "recordId": { "type": "string", "maxLength": 128 },
+        "participantUid": { "type": "string", "maxLength": 128 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 128 },
+        "authorRole": { "type": "string", "enum": ["admin", "student"] },
+        "message": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recordId", "participantUid", "authorUid", "authorName", "authorRole", "message", "createdAt"]
+    },
+    "consent": {
+      "title": "Consent",
+      "description": "Participant assent and consent acknowledgement records",
+      "type": "object",
+      "properties": {
+        "participantUid": { "type": "string", "maxLength": 128 },
+        "participantId": { "type": "string", "maxLength": 32 },
+        "consentVersion": { "type": "string", "maxLength": 32 },
+        "accepted": { "type": "boolean" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "guardianConsentProvided": { "type": "boolean" }
+      },
+      "required": ["participantUid", "participantId", "consentVersion", "accepted", "acceptedAt"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Immutable administrative audit trail for critical security and data changes",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 64 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 256 },
+        "targetUid": { "type": "string", "maxLength": 128 },
+        "recordId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "actorUid", "timestamp"]
+    },
+    "appSetting": {
+      "title": "AppSetting",
+      "description": "Global research configuration, announcements, and consent terms",
+      "type": "object",
+      "properties": {
+        "settingKey": { "type": "string", "maxLength": 64 },
+        "content": { "type": "string", "maxLength": 5000 },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedByUid": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["settingKey", "updatedAt"]
+    },
+    "privateStudentCredential": {
+      "title": "PrivateStudentCredential",
+      "description": "Server-side only mapping of participant IDs, hashed PINs, and failed attempt rate limits",
+      "type": "object",
+      "properties": {
+        "participantId": { "type": "string", "maxLength": 32 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "pinHash": { "type": "string", "maxLength": 256 },
+        "failedAttempts": { "type": "number" },
+        "lockedUntil": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantId", "uid", "pinHash", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/user" },
+      "description": "Authorized administrators and researchers"
+    },
+    "/participants/{participantUid}": {
+      "schema": { "$ref": "#/entities/participant" },
+      "description": "Student participants registered in the research program"
+    },
+    "/exerciseRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/exerciseRecord" },
+      "description": "Exercise logs submitted by student participants"
+    },
+    "/recordComments/{commentId}": {
+      "schema": { "$ref": "#/entities/recordComment" },
+      "description": "Review feedback and participant replies for exercise logs"
+    },
+    "/consents/{participantUid}": {
+      "schema": { "$ref": "#/entities/consent" },
+      "description": "Research consent and participant assent records"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/auditLog" },
+      "description": "Administrative audit logging records"
+    },
+    "/appSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/appSetting" },
+      "description": "System settings, announcement notices, and consent copy"
+    },
+    "/privateStudentCredentials/{credentialId}": {
+      "schema": { "$ref": "#/entities/privateStudentCredential" },
+      "description": "Server-only credential hashes and lockout guards"
+    }
+  }
+}

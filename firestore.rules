@@ -1,0 +1,187 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isActiveAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email == 'hack.cvbnm@gmail.com')
+        ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          && (
+            !('active' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data)
+            || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active != false
+          )
+        )
+        ||
+        (
+          request.auth.token.email != null
+          && exists(/databases/$(database)/documents/users/$(request.auth.token.email))
+          && get(/databases/$(database)/documents/users/$(request.auth.token.email)).data.role == 'admin'
+          && (
+            !('active' in get(/databases/$(database)/documents/users/$(request.auth.token.email)).data)
+            || get(/databases/$(database)/documents/users/$(request.auth.token.email)).data.active != false
+          )
+        )
+      );
+    }
+
+    function isAdmin() {
+      return isActiveAdmin();
+    }
+
+    // 1. users: Authenticated user can get own profile (by UID or email).
+    // Active admins can get or list profiles. All mutations strictly via Server Admin SDK.
+    match /users/{userId} {
+      allow get: if isSignedIn() && (
+        request.auth.uid == userId
+        || (request.auth.token.email != null && (
+          request.auth.token.email == userId
+          || request.auth.token.email == 'hack.cvbnm@gmail.com'
+        ))
+        || isActiveAdmin()
+      );
+      allow list: if isActiveAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // 2. privateStudentCredentials: NEVER accessible from client SDK.
+    match /privateStudentCredentials/{credentialId} {
+      allow read, write: if false;
+    }
+
+    // 3. participants: Students can only read own profile. Admins have full access.
+    match /participants/{participantUid} {
+      allow get: if isSignedIn() && (request.auth.uid == participantUid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 4. exerciseRecords: Student CRUD own data only according to status workflow. Admin reviews.
+    match /exerciseRecords/{recordId} {
+      allow get: if isSignedIn() && (isAdmin() || existing().participantUid == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.participantUid == request.auth.uid);
+
+      // Document creation
+      allow create: if isSignedIn() && (
+        isAdmin() || (
+          incoming().participantUid == request.auth.uid
+          && incoming().createdByUid == request.auth.uid
+          && (incoming().status == 'draft' || incoming().status == 'pending')
+          && incoming().keys().hasOnly([
+            'participantUid', 'participantId', 'classroomId', 'activityType', 'activityName',
+            'exerciseDate', 'durationMinutes', 'intensity', 'notes', 'evidenceImages',
+            'status', 'submittedAt', 'reviewedAt', 'reviewedByUid', 'reviewNotes',
+            'createdAt', 'updatedAt', 'createdByUid'
+          ])
+          && incoming().activityType is string && incoming().activityType.size() <= 64
+          && incoming().activityName is string && incoming().activityName.size() <= 128
+          && incoming().durationMinutes is number && incoming().durationMinutes > 0 && incoming().durationMinutes <= 1440
+          && (incoming().intensity == 'light' || incoming().intensity == 'moderate' || incoming().intensity == 'vigorous')
+        )
+      );
+
+      // Strict field-restricted updates
+      allow update: if isSignedIn() && (
+        // Case A: Admin Review (restricted to review fields only)
+        (
+          isAdmin()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewNotes', 'reviewedAt', 'reviewedByUid', 'updatedAt'])
+          && incoming().status in ['approved', 'needs_revision', 'rejected', 'pending']
+          && incoming().participantUid == existing().participantUid
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+        )
+        ||
+        // Case B: Student updating their own draft or needs_revision record
+        (
+          existing().participantUid == request.auth.uid
+          && incoming().participantUid == existing().participantUid
+          && incoming().participantId == existing().participantId
+          && incoming().classroomId == existing().classroomId
+          && incoming().createdByUid == existing().createdByUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'activityType', 'activityName', 'exerciseDate', 'durationMinutes', 
+            'intensity', 'notes', 'evidenceImages', 'status', 'submittedAt', 'updatedAt'
+          ])
+          // Status workflow transitions:
+          // draft -> draft OR draft -> pending
+          // needs_revision -> pending (resubmit)
+          && (
+            (existing().status == 'draft' && (incoming().status == 'draft' || incoming().status == 'pending'))
+            || (existing().status == 'needs_revision' && incoming().status == 'pending')
+          )
+          && incoming().activityType is string && incoming().activityType.size() <= 64
+          && incoming().activityName is string && incoming().activityName.size() <= 128
+          && incoming().durationMinutes is number && incoming().durationMinutes > 0 && incoming().durationMinutes <= 1440
+          && (incoming().intensity == 'light' || incoming().intensity == 'moderate' || incoming().intensity == 'vigorous')
+        )
+      );
+
+      allow delete: if isAdmin() || (
+        isSignedIn()
+        && existing().participantUid == request.auth.uid
+        && existing().status == 'draft'
+      );
+    }
+
+    // 5. recordComments: Feedback & discussions on exercise records.
+    match /recordComments/{commentId} {
+      allow get: if isSignedIn() && (isAdmin() || existing().participantUid == request.auth.uid);
+      allow list: if isSignedIn() && (isAdmin() || resource.data.participantUid == request.auth.uid);
+      allow create: if isSignedIn() && (
+        isAdmin() || (
+          incoming().participantUid == request.auth.uid
+          && incoming().authorUid == request.auth.uid
+          && incoming().authorRole == 'student'
+          && incoming().message is string && incoming().message.size() <= 1000
+        )
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    // 6. consents: Participant assent / consent records.
+    match /consents/{participantUid} {
+      allow get: if isSignedIn() && (request.auth.uid == participantUid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isSignedIn() && request.auth.uid == participantUid;
+      allow delete: if false;
+    }
+
+    // 7. auditLogs: Read-only for admins. Writes via Server API only.
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    // 8. appSettings: Read for authenticated users, managed by admins.
+    match /appSettings/{settingId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
