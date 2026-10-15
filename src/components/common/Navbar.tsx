@@ -32,7 +32,11 @@ export const Navbar: React.FC = () => {
           {/* Brand Logo & Tagline */}
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <Activity className="w-6 h-6 stroke-[2.5]" />
+              <img
+  src="/logo.png"
+  alt="FitQuest"
+  className="w-8 h-8 object-contain"
+/>
             </div>
             <div>
               <div className="flex items-center gap-2">
