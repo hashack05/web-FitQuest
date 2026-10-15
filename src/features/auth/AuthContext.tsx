@@ -149,7 +149,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setAuthError('บัญชีของคุณไม่ได้รับสิทธิ์เข้าใช้งานแล้ว (สถานะถูกระงับ)');
       } else {
         // Sync any updated admin data (e.g. position change)
-        setAdminProfile(uData);
+        setAdminProfile({
+          ...uData,
+          uid: uData.uid || firebaseUser.uid,
+          email: uData.email || firebaseUser.email || '',
+        });
       }
     }, (err) => {
       console.warn('Error in admin realtime listener:', err);
@@ -434,7 +438,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (userSnap.exists()) {
         const uData = userSnap.data() as UserDoc;
         setRole('admin');
-        setAdminProfile(uData);
+        setAdminProfile({ ...uData, uid: uData.uid || cred.user.uid });
         recordUserActivity();
       }
       return { success: true };
