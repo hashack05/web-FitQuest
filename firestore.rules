@@ -26,7 +26,7 @@ service cloud.firestore {
 
     function isActiveAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email != null && request.auth.token.email == 'hack.cvbnm@gmail.com')
+        (request.auth.token.email != null && (request.auth.token.email == 'hack.cvbnm@gmail.com' || request.auth.token.email == 'ssdoubles.story@gmail.com'))
         ||
         (
           exists(/databases/$(database)/documents/users/$(request.auth.uid))
@@ -95,7 +95,7 @@ service cloud.firestore {
             'participantUid', 'participantId', 'classroomId', 'activityType', 'activityName',
             'exerciseDate', 'durationMinutes', 'intensity', 'notes', 'evidenceImages',
             'status', 'submittedAt', 'reviewedAt', 'reviewedByUid', 'reviewNotes',
-                    'createdAt', 'updatedAt', 'createdByUid', 'history'
+            'createdAt', 'updatedAt', 'createdByUid', 'history'
           ])
           && (!('history' in incoming()) || (incoming().history is list && incoming().history.size() <= 50))
           && incoming().activityType is string && incoming().activityType.size() <= 64
@@ -128,14 +128,13 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'activityType', 'activityName', 'exerciseDate', 'durationMinutes', 
-                     'intensity', 'notes', 'evidenceImages', 'status', 'submittedAt', 'updatedAt', 'history'
+            'intensity', 'notes', 'evidenceImages', 'status', 'submittedAt', 'updatedAt', 'history'
           ])
           && (!('history' in incoming()) || (incoming().history is list && incoming().history.size() <= 50))
-          // Status workflow transitions:
-          // draft -> draft OR draft -> pending
-          // needs_revision -> pending (resubmit)
+          // Student can edit only when NOT yet reviewed (draft, pending without reviewedAt, or needs_revision):
           && (
             (existing().status == 'draft' && (incoming().status == 'draft' || incoming().status == 'pending'))
+            || (existing().status == 'pending' && existing().reviewedAt == null && (incoming().status == 'pending' || incoming().status == 'draft'))
             || (existing().status == 'needs_revision' && incoming().status == 'pending')
           )
           && incoming().activityType is string && incoming().activityType.size() <= 64
@@ -145,10 +144,20 @@ service cloud.firestore {
         )
       );
 
-      allow delete: if isAdmin() || (
-        isSignedIn()
-        && existing().participantUid == request.auth.uid
-        && existing().status == 'draft'
+      // Deletion rules:
+      // 1. Admin can ONLY delete records that have been reviewed (approved, rejected, or reviewedAt != null)
+      // 2. Student can cancel (delete) own record ONLY when it has NOT yet been reviewed (draft, pending without reviewedAt, or needs_revision)
+      allow delete: if (
+        (
+          isAdmin()
+          && (existing().status in ['approved', 'rejected'] || existing().reviewedAt != null)
+        )
+        ||
+        (
+          isSignedIn()
+          && existing().participantUid == request.auth.uid
+          && (existing().status == 'draft' || (existing().status == 'pending' && existing().reviewedAt == null) || existing().status == 'needs_revision')
+        )
       );
     }
 
@@ -185,6 +194,30 @@ service cloud.firestore {
     match /appSettings/{settingId} {
       allow get, list: if isSignedIn();
       allow create, update, delete: if isAdmin();
+    }
+
+    // 9. notifications: Real-time user notifications for record edits, reviews, and comments
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && (
+        (resource.data.recipientRole == 'admin' && isAdmin())
+        || (resource.data.recipientUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (
+        isAdmin()
+        || (resource.data.recipientUid == request.auth.uid)
+      );
+      allow create: if isSignedIn() && (
+        (isAdmin() && incoming().recipientRole == 'student')
+        || (incoming().recipientRole == 'admin' && incoming().actorUid == request.auth.uid)
+      )
+      && incoming().title is string && incoming().title.size() <= 128
+      && incoming().message is string && incoming().message.size() <= 500;
+
+      allow update: if isSignedIn() && (
+        ((resource.data.recipientRole == 'admin' && isAdmin()) || (resource.data.recipientUid == request.auth.uid))
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid);
     }
   }
 }
