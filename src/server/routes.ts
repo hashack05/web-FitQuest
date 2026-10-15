@@ -421,6 +421,78 @@ apiRouter.post('/admin/reset-student-pin', async (req: Request, res: Response) =
 });
 
 /**
+ * POST /api/admin/delete-participant
+ * Admin only: Deletes a participant profile, their credentials, auth account, and logs action.
+ */
+apiRouter.post('/admin/delete-participant', async (req: Request, res: Response) => {
+  try {
+    const adminCaller = await verifyAdminRequest(req.headers.authorization);
+    const { uid } = req.body;
+
+    if (!uid || typeof uid !== 'string') {
+      return res.status(400).json({ error: 'กรุณาระบุ UID ของผู้เข้าร่วมที่ต้องการลบ' });
+    }
+
+    const participantRef = adminDb.collection('participants').doc(uid);
+    const participantDoc = await participantRef.get();
+
+    if (!participantDoc.exists) {
+      return res.status(404).json({ error: 'ไม่พบข้อมูลผู้เข้าร่วมนี้ในระบบ' });
+    }
+
+    const pData = participantDoc.data();
+    const participantId = pData?.participantId || uid;
+    const displayName = pData?.displayName || '';
+
+    // Batch delete participant doc, private credentials doc, and consent doc
+    const batch = adminDb.batch();
+    batch.delete(participantRef);
+    batch.delete(adminDb.collection('privateStudentCredentials').doc(uid));
+    batch.delete(adminDb.collection('consents').doc(uid));
+    // Clean up exercise records and notifications belonging to this participant
+    try {
+      const recordsSnap = await adminDb.collection('exerciseRecords').where('participantUid', '==', uid).get();
+      if (!recordsSnap.empty) {
+        const recordsBatch = adminDb.batch();
+        recordsSnap.docs.forEach((d) => recordsBatch.delete(d.ref));
+        await recordsBatch.commit();
+      }
+      const notifsSnap = await adminDb.collection('notifications').where('recipientUid', '==', uid).get();
+      if (!notifsSnap.empty) {
+        const notifsBatch = adminDb.batch();
+        notifsSnap.docs.forEach((d) => notifsBatch.delete(d.ref));
+        await notifsBatch.commit();
+      }
+    } catch (cleanupErr: any) {
+      console.warn('Error cleaning up participant records/notifs:', cleanupErr.message);
+    }
+
+    // Also delete Firebase Auth user account if exists
+    try {
+      await adminAuth.deleteUser(uid);
+    } catch (authErr: any) {
+      console.warn('Could not delete Auth user (may not exist):', authErr.message);
+    }
+
+    // Audit Log
+    await recordAuditLog({
+      action: 'DELETE_PARTICIPANT',
+      actorUid: adminCaller.uid,
+      actorEmail: adminCaller.email,
+      targetUid: uid,
+      details: `Deleted participant account ${participantId} (${displayName}) by admin`,
+    });
+
+    return res.json({ success: true, message: `ลบบัญชีผู้เข้าร่วม ${participantId} เรียบร้อยแล้ว` });
+  } catch (err: any) {
+    console.error('Delete participant error:', err.message);
+    return res.status(err.message.includes('Unauthorized') ? 401 : 500).json({
+      error: err.message || 'ไม่สามารถลบบัญชีผู้เข้าร่วมได้',
+    });
+  }
+});
+
+/**
  * POST /api/admin/create-admin
  * Admin adds or promotes another user to admin with specific position.
  */
