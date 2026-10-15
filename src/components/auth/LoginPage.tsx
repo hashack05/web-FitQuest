@@ -114,7 +114,11 @@ export const LoginPage: React.FC = () => {
       {/* Brand Header */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-3">
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-3xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25">
-          <Activity className="w-8 h-8 stroke-[2.5]" />
+           <img
+  src="/logo.png"
+  alt="FitQuest"
+  className="w-12 h-12 object-contain"
+/>
         </div>
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 font-['Poppins',sans-serif]">
