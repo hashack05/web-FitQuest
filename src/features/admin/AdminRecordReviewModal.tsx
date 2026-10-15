@@ -12,16 +12,18 @@ import {
   Loader2,
   ImageIcon,
   User,
-  ShieldCheck
+  ShieldCheck,
+  History
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.tsx';
-import { ExerciseRecordDoc, RecordCommentDoc, ExerciseStatus } from '../../types/index.ts';
+import { ExerciseRecordDoc, RecordCommentDoc, ExerciseStatus, ExerciseHistoryEntry } from '../../types/index.ts';
 import { StatusBadge } from '../../components/common/StatusBadge.tsx';
 import { 
   reviewExerciseRecord, 
   subscribeRecordComments, 
   addRecordComment,
-  openEvidenceImage 
+  openEvidenceImage,
+  getRecordTimeline 
 } from '../../services/exerciseService.ts';
 
 interface AdminRecordReviewModalProps {
@@ -181,6 +183,41 @@ export const AdminRecordReviewModal: React.FC<AdminRecordReviewModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* ประวัติการทำรายการ (Transaction History) */}
+          {(() => {
+            const timeline = getRecordTimeline(record);
+            return (
+              <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/70 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                      <History className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-bold text-xs text-slate-900">ประวัติการทำรายการของบันทึกนี้</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-mono">{timeline.length} รายการ</span>
+                </div>
+
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {timeline.map((item, idx) => (
+                    <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 text-xs space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-900">{item.actionLabel}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {item.timestamp ? new Date(item.timestamp).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        ผู้ทำรายการ: <strong className="text-slate-700">{item.actorRole === 'admin' ? 'ผู้ตรวจประเมิน' : item.actorName}</strong>
+                      </div>
+                      {item.notes && <p className="text-[11px] text-slate-600 bg-slate-50 p-1.5 rounded-md">{item.notes}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Review Notes Input */}
           <div className="p-4 bg-blue-50/60 border border-blue-200 rounded-2xl space-y-2">
