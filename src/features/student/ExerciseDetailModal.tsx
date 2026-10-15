@@ -11,15 +11,20 @@ import {
   FileText,
   User,
   ShieldCheck,
-  ImageIcon
+  ImageIcon,
+  History,
+  CheckCircle2,
+  RotateCcw,
+  XCircle
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext.tsx';
-import { ExerciseRecordDoc, RecordCommentDoc } from '../../types/index.ts';
+import { ExerciseRecordDoc, RecordCommentDoc, ExerciseHistoryEntry } from '../../types/index.ts';
 import { StatusBadge } from '../../components/common/StatusBadge.tsx';
 import { 
   subscribeRecordComments, 
   addRecordComment,
-  openEvidenceImage 
+  openEvidenceImage,
+  getRecordTimeline
 } from '../../services/exerciseService.ts';
 
 interface ExerciseDetailModalProps {
@@ -74,6 +79,78 @@ export const ExerciseDetailModal: React.FC<ExerciseDetailModalProps> = ({
       console.error('Failed to post comment:', err);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const timeline = record ? getRecordTimeline(record) : [];
+
+  const formatTimestamp = (ts?: string) => {
+    if (!ts) return '-';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleString('th-TH', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return ts;
+    }
+  };
+
+  const getActionBadge = (action: string) => {
+    switch (action) {
+      case 'submitted':
+        return {
+          icon: <Send className="w-3.5 h-3.5 text-blue-600" />,
+          bg: 'bg-blue-100',
+          textColor: 'text-blue-900',
+        };
+      case 'created_draft':
+        return {
+          icon: <FileText className="w-3.5 h-3.5 text-slate-600" />,
+          bg: 'bg-slate-200',
+          textColor: 'text-slate-900',
+        };
+      case 'updated':
+        return {
+          icon: <Edit3 className="w-3.5 h-3.5 text-amber-600" />,
+          bg: 'bg-amber-100',
+          textColor: 'text-amber-900',
+        };
+      case 'resubmitted':
+        return {
+          icon: <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />,
+          bg: 'bg-indigo-100',
+          textColor: 'text-indigo-900',
+        };
+      case 'approved':
+        return {
+          icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />,
+          bg: 'bg-emerald-100',
+          textColor: 'text-emerald-900',
+        };
+      case 'needs_revision':
+        return {
+          icon: <AlertCircle className="w-3.5 h-3.5 text-orange-600" />,
+          bg: 'bg-orange-100',
+          textColor: 'text-orange-900',
+        };
+      case 'rejected':
+        return {
+          icon: <XCircle className="w-3.5 h-3.5 text-rose-600" />,
+          bg: 'bg-rose-100',
+          textColor: 'text-rose-900',
+        };
+      default:
+        return {
+          icon: <History className="w-3.5 h-3.5 text-blue-600" />,
+          bg: 'bg-blue-100',
+          textColor: 'text-blue-900',
+        };
     }
   };
 
@@ -202,6 +279,60 @@ export const ExerciseDetailModal: React.FC<ExerciseDetailModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* ประวัติการทำรายการ (Transaction History) */}
+          <div className="border border-slate-200 rounded-2xl p-4 sm:p-5 bg-slate-50/70 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shadow-2xs">
+                  <History className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">ประวัติการทำรายการ (Transaction History)</h3>
+                  <p className="text-[11px] text-slate-500">บันทึกขั้นตอนและไทม์ไลน์ของกิจกรรมนี้</p>
+                </div>
+              </div>
+              <span className="text-[11px] text-slate-600 font-semibold bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                {timeline.length} รายการ
+              </span>
+            </div>
+
+            <div className="relative pl-6 space-y-3 pt-2 before:absolute before:left-3 before:top-4 before:bottom-3 before:w-0.5 before:bg-slate-200">
+              {timeline.map((item, idx) => {
+                const badge = getActionBadge(item.action);
+                return (
+                  <div key={idx} className="relative group">
+                    {/* Timeline Node Icon */}
+                    <div className={`absolute -left-6 top-0.5 w-6 h-6 rounded-full ${badge.bg} flex items-center justify-center border-2 border-white shadow-xs`}>
+                      {badge.icon}
+                    </div>
+
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className={`text-xs font-bold ${badge.textColor}`}>
+                          {item.actionLabel}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {formatTimestamp(item.timestamp)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                        <span>โดย:</span>
+                        <span className="font-medium text-slate-700">
+                          {item.actorRole === 'admin' ? 'ผู้ตรวจประเมินโครงการ (ทีมวิจัย)' : item.actorName || 'ผู้เข้าร่วม'}
+                        </span>
+                      </div>
+                      {item.notes && (
+                        <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded-lg mt-1 border border-slate-100">
+                          {item.notes}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           {/* Comments / Discussion Thread */}
           <div className="border-t border-slate-200 pt-5 space-y-4">
