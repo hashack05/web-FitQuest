@@ -95,8 +95,9 @@ service cloud.firestore {
             'participantUid', 'participantId', 'classroomId', 'activityType', 'activityName',
             'exerciseDate', 'durationMinutes', 'intensity', 'notes', 'evidenceImages',
             'status', 'submittedAt', 'reviewedAt', 'reviewedByUid', 'reviewNotes',
-            'createdAt', 'updatedAt', 'createdByUid'
+                    'createdAt', 'updatedAt', 'createdByUid', 'history'
           ])
+          && (!('history' in incoming()) || (incoming().history is list && incoming().history.size() <= 50))
           && incoming().activityType is string && incoming().activityType.size() <= 64
           && incoming().activityName is string && incoming().activityName.size() <= 128
           && incoming().durationMinutes is number && incoming().durationMinutes > 0 && incoming().durationMinutes <= 1440
