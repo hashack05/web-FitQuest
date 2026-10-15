@@ -128,8 +128,9 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().diff(existing()).affectedKeys().hasOnly([
             'activityType', 'activityName', 'exerciseDate', 'durationMinutes', 
-            'intensity', 'notes', 'evidenceImages', 'status', 'submittedAt', 'updatedAt'
+                     'intensity', 'notes', 'evidenceImages', 'status', 'submittedAt', 'updatedAt', 'history'
           ])
+          && (!('history' in incoming()) || (incoming().history is list && incoming().history.size() <= 50))
           // Status workflow transitions:
           // draft -> draft OR draft -> pending
           // needs_revision -> pending (resubmit)
