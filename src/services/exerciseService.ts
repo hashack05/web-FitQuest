@@ -17,7 +17,7 @@ import {
   Timestamp 
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage, handleFirestoreError, OperationType } from '../lib/firebase/client.ts';
+import { db, auth, storage, handleFirestoreError, OperationType } from '../lib/firebase/client.ts';
 import { 
   ExerciseRecordDoc, 
   RecordCommentDoc, 
@@ -26,10 +26,10 @@ import {
   ExerciseHistoryEntry,
   AppNotificationDoc 
 } from '../types/index.ts';
-
+ 
 // In-flight submission guard for current tab
 const inFlightOperations = new Set<string>();
-
+ 
 /**
  * Realtime subscription to student's own exercise records
  */
@@ -45,7 +45,7 @@ export function subscribeStudentRecords(
     orderBy('createdAt', 'desc'),
     limit(100)
   );
-
+ 
   return onSnapshot(
     q,
     (snapshot) => {
@@ -69,7 +69,7 @@ export function subscribeStudentRecords(
     }
   );
 }
-
+ 
 /**
  * Realtime subscription to paginated records for Admin review (Display purposes)
  */
@@ -81,19 +81,19 @@ export function subscribeAdminRecordsPaginated(
 ) {
   const colPath = 'exerciseRecords';
   let constraints: any[] = [];
-
+ 
   if (filter.status && filter.status !== 'all') {
     constraints.push(where('status', '==', filter.status));
   }
   if (filter.classroomId && filter.classroomId !== 'all') {
     constraints.push(where('classroomId', '==', filter.classroomId));
   }
-
+ 
   constraints.push(orderBy('createdAt', 'desc'));
   constraints.push(limit(pageLimit));
-
+ 
   const q = query(collection(db, colPath), ...constraints);
-
+ 
   return onSnapshot(
     q,
     (snapshot) => {
@@ -117,7 +117,7 @@ export function subscribeAdminRecordsPaginated(
     }
   );
 }
-
+ 
 /**
  * Fetch total aggregate statistics using getCountFromServer() (Issue 8: Uncapped true totals)
  */
@@ -131,7 +131,7 @@ export async function fetchAggregateDashboardStats(): Promise<{
 }> {
   const recordsCol = collection(db, 'exerciseRecords');
   const participantsCol = collection(db, 'participants');
-
+ 
   try {
     const [
       totalSnap,
@@ -148,7 +148,7 @@ export async function fetchAggregateDashboardStats(): Promise<{
       getCountFromServer(query(recordsCol, where('status', '==', 'rejected'))),
       getCountFromServer(participantsCol),
     ]);
-
+ 
     return {
       totalRecords: totalSnap.data().count,
       pending: pendingSnap.data().count,
@@ -169,7 +169,7 @@ export async function fetchAggregateDashboardStats(): Promise<{
     };
   }
 }
-
+ 
 /**
  * Realtime subscription to comments on a specific record
  */
@@ -184,7 +184,7 @@ export function subscribeRecordComments(
     where('recordId', '==', recordId),
     orderBy('createdAt', 'asc')
   );
-
+ 
   return onSnapshot(
     q,
     (snapshot) => {
@@ -205,7 +205,7 @@ export function subscribeRecordComments(
     }
   );
 }
-
+ 
 /**
  * Synthesizes or retrieves chronological transaction history for an exercise record
  */
@@ -213,11 +213,11 @@ export function getRecordTimeline(record: ExerciseRecordDoc): ExerciseHistoryEnt
   if (record.history && Array.isArray(record.history) && record.history.length > 0) {
     return record.history;
   }
-
+ 
   // Synthesize timeline from factual fields for backwards compatibility with existing records
   const timeline: ExerciseHistoryEntry[] = [];
   const baseTime = record.createdAt || record.exerciseDate || new Date().toISOString();
-
+ 
   if (record.status === 'draft') {
     timeline.push({
       action: 'created_draft',
@@ -237,7 +237,7 @@ export function getRecordTimeline(record: ExerciseRecordDoc): ExerciseHistoryEnt
       notes: `บันทึกกิจกรรม ${record.activityName} (${record.durationMinutes} นาที)`,
     });
   }
-
+ 
   // If resubmitted or updated
   if (record.submittedAt && record.createdAt && record.submittedAt !== record.createdAt) {
     timeline.push({
@@ -256,7 +256,7 @@ export function getRecordTimeline(record: ExerciseRecordDoc): ExerciseHistoryEnt
       timestamp: record.updatedAt,
     });
   }
-
+ 
   // If reviewed by researcher
   if (record.reviewedAt) {
     const labelMap: Record<string, string> = {
@@ -273,10 +273,10 @@ export function getRecordTimeline(record: ExerciseRecordDoc): ExerciseHistoryEnt
       notes: record.reviewNotes || undefined,
     });
   }
-
+ 
   return timeline;
 }
-
+ 
 /**
  * Create new exercise record with transaction-backed duplicate prevention and initial transaction history
  */
@@ -298,14 +298,14 @@ export async function createExerciseRecord(record: {
   if (inFlightOperations.has(opKey)) {
     throw new Error('ระบบกำลังดำเนินการบันทึกข้อมูล กรุณาอย่ากดส่งซ้ำ');
   }
-
+ 
   inFlightOperations.add(opKey);
   const colPath = 'exerciseRecords';
-
+ 
   try {
     const nowIso = new Date().toISOString();
     const isPending = record.status === 'pending';
-
+ 
     // Transaction history entry for this submission
     const initialHistoryEntry: ExerciseHistoryEntry = {
       action: isPending ? 'submitted' : 'created_draft',
@@ -315,11 +315,11 @@ export async function createExerciseRecord(record: {
       timestamp: nowIso,
       notes: `กิจกรรม: ${record.activityName} (${record.durationMinutes} นาที, ระดับ ${record.intensity})`,
     };
-
+ 
     const targetDocRef = record.submissionId
       ? doc(db, colPath, record.submissionId)
       : doc(collection(db, colPath));
-
+ 
     await setDoc(targetDocRef, {
       participantUid: record.participantUid,
       participantId: record.participantId,
@@ -341,7 +341,7 @@ export async function createExerciseRecord(record: {
       createdByUid: record.participantUid,
       history: [initialHistoryEntry],
     });
-
+ 
     const resultDocId = targetDocRef.id;
     return resultDocId;
   } catch (error) {
@@ -350,7 +350,7 @@ export async function createExerciseRecord(record: {
     inFlightOperations.delete(opKey);
   }
 }
-
+ 
 /**
  * Update exercise record with ATOMIC Firestore runTransaction and append to transaction history
  */
@@ -366,37 +366,37 @@ export async function updateExerciseRecord(
     activityName: string;
     exerciseDate: string;
   } | null = null;
-
+ 
   try {
     await runTransaction(db, async (transaction) => {
       const recordRef = doc(db, 'exerciseRecords', recordId);
       const sfDoc = await transaction.get(recordRef);
-
+ 
       if (!sfDoc.exists()) {
         throw new Error('ไม่พบข้อมูลบันทึกการออกกำลังกายนี้');
       }
-
+ 
       const currentData = sfDoc.data();
-
+ 
       // Guard: Participant cannot edit records that are already reviewed
       if (currentData.status === 'approved' || currentData.status === 'rejected' || currentData.reviewedAt) {
         throw new Error('บันทึกนี้ผ่านการตรวจประเมินแล้ว ไม่สามารถแก้ไขได้');
       }
-
+ 
       const currentUpdatedAt = currentData.updatedAt?.toDate
         ? currentData.updatedAt.toDate().toISOString()
         : currentData.updatedAt;
-
+ 
       // Atomic conflict check: abort if another device updated the record
       if (expectedLastUpdated && currentUpdatedAt && currentUpdatedAt !== expectedLastUpdated) {
         throw new Error('ข้อมูลนี้มีการเปลี่ยนแปลงจากอีกอุปกรณ์ กรุณาตรวจสอบข้อมูลล่าสุดก่อนบันทึก');
       }
-
+ 
       const nowIso = new Date().toISOString();
       const existingHistory: ExerciseHistoryEntry[] = Array.isArray(currentData.history)
         ? [...currentData.history]
         : getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc);
-
+ 
       const isResubmit = currentData.status === 'needs_revision' && updates.status === 'pending';
       const isFirstSubmit = currentData.status === 'draft' && updates.status === 'pending';
       const actionType = isResubmit ? 'resubmitted' : isFirstSubmit ? 'submitted' : 'updated';
@@ -405,7 +405,7 @@ export async function updateExerciseRecord(
         : isFirstSubmit
         ? 'ส่งตรวจการออกกำลังกาย'
         : 'แก้ไขรายละเอียดกิจกรรม';
-
+ 
       const updateEntry: ExerciseHistoryEntry = {
         action: actionType,
         actionLabel,
@@ -414,21 +414,21 @@ export async function updateExerciseRecord(
         timestamp: nowIso,
         notes: updates.notes ? `รายละเอียด: ${updates.notes}` : undefined,
       };
-
+ 
       const nextHistory = [...existingHistory, updateEntry].slice(-50);
-
+ 
       const updatePayload: Record<string, any> = {
         ...updates,
         updatedAt: serverTimestamp(),
         history: nextHistory,
       };
-
+ 
       if (updates.status === 'pending') {
         updatePayload.submittedAt = serverTimestamp();
       }
-
-      transaction.update(recordRef, updatePayload);
-
+ 
+      transaction.update(recordRef, stripUndefined(updatePayload));
+ 
       notifyAdminPayload = {
         participantId: currentData.participantId || 'ผู้เข้าร่วม',
         participantUid: currentData.participantUid,
@@ -436,7 +436,7 @@ export async function updateExerciseRecord(
         exerciseDate: updates.exerciseDate || currentData.exerciseDate || '',
       };
     });
-
+ 
     // Notify admins that the record was edited by participant
     if (notifyAdminPayload) {
       const p = notifyAdminPayload as { participantId: string; participantUid: string; activityName: string; exerciseDate: string };
@@ -466,7 +466,27 @@ export async function updateExerciseRecord(
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
-
+ 
+/**
+ * Firestore rejects `undefined` anywhere in a document (including inside arrays).
+ * Recursively drop undefined values while keeping FieldValues (serverTimestamp) intact.
+ */
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((v) => stripUndefined(v)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value; // FieldValue, Timestamp, etc.
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value as Record<string, any>)) {
+      if (v !== undefined) out[k] = stripUndefined(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+ 
 /**
  * Admin review mutation and transaction history logging
  */
@@ -481,21 +501,21 @@ export async function reviewExerciseRecord(
     const recordRef = doc(db, 'exerciseRecords', recordId);
     const snap = await getDoc(recordRef);
     const currentData = snap.data();
-
+ 
     if (!currentData) {
       throw new Error('ไม่พบบันทึกการออกกำลังกายนี้');
     }
-
+ 
     const existingHistory: ExerciseHistoryEntry[] = Array.isArray(currentData.history)
       ? [...currentData.history]
       : getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc);
-
+ 
     const labelMap: Record<string, string> = {
       approved: 'ผ่านการตรวจประเมินโดยทีมวิจัย',
       needs_revision: 'ผู้ตรวจประเมินแจ้งข้อเสนอแนะให้แก้ไข',
       rejected: 'ไม่ผ่านเกณฑ์การประเมิน',
     };
-
+ 
     const reviewEntry: ExerciseHistoryEntry = {
       action: status,
       actionLabel: labelMap[status] || `ปรับสถานะเป็น ${status}`,
@@ -504,18 +524,18 @@ export async function reviewExerciseRecord(
       timestamp: new Date().toISOString(),
       notes: reviewNotes || undefined,
     };
-
+ 
     const nextHistory = [...existingHistory, reviewEntry].slice(-50);
-
-    await updateDoc(recordRef, {
+ 
+    await updateDoc(recordRef, stripUndefined({
       status,
       reviewNotes: reviewNotes || '',
       reviewedAt: serverTimestamp(),
-      reviewedByUid: reviewerUid,
+      reviewedByUid: reviewerUid || auth.currentUser?.uid || '',
       updatedAt: serverTimestamp(),
       history: nextHistory,
-    });
-
+    }));
+ 
     // Notify participant of review result
     try {
       const statusThai: Record<string, string> = {
@@ -544,7 +564,7 @@ export async function reviewExerciseRecord(
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
-
+ 
 /**
  * Add comment / feedback on a record
  */
@@ -568,7 +588,7 @@ export async function addRecordComment(comment: {
       message: comment.message,
       createdAt: serverTimestamp(),
     });
-
+ 
     // If admin commented, notify student
     if (comment.authorRole === 'admin') {
       try {
@@ -590,13 +610,13 @@ export async function addRecordComment(comment: {
         console.warn('Failed to send comment notification to student:', err);
       }
     }
-
+ 
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, colPath);
   }
 }
-
+ 
 /**
  * Admin deletes a reviewed exercise record.
  * Allowed ONLY if record has been reviewed (status is approved, rejected, or reviewedAt is not null).
@@ -609,7 +629,7 @@ export async function deleteExerciseRecordByAdmin(
   if (!isReviewed) {
     throw new Error('ไม่สามารถลบได้: ระบบอนุญาตให้แอดมินลบได้เฉพาะบันทึกที่ผ่านการตรวจแล้วเท่านั้น');
   }
-
+ 
   const path = `exerciseRecords/${recordId}`;
   try {
     await deleteDoc(doc(db, 'exerciseRecords', recordId));
@@ -617,7 +637,7 @@ export async function deleteExerciseRecordByAdmin(
     handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
-
+ 
 /**
  * Student cancels (deletes) their own unreviewed record.
  * Allowed ONLY when record has NOT yet been reviewed.
@@ -634,7 +654,7 @@ export async function cancelExerciseRecordByStudent(
   if (record.participantUid !== studentUid) {
     throw new Error('ไม่มีสิทธิ์ยกเลิกบันทึกนี้');
   }
-
+ 
   const path = `exerciseRecords/${recordId}`;
   try {
     await deleteDoc(doc(db, 'exerciseRecords', recordId));
@@ -642,7 +662,7 @@ export async function cancelExerciseRecordByStudent(
     handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
-
+ 
 /**
  * Realtime subscription to notifications for Student (by recipientUid)
  */
@@ -657,7 +677,7 @@ export function subscribeStudentNotifications(
     where('recipientUid', '==', studentUid),
     limit(50)
   );
-
+ 
   return onSnapshot(
     q,
     (snapshot) => {
@@ -680,7 +700,7 @@ export function subscribeStudentNotifications(
     }
   );
 }
-
+ 
 /**
  * Realtime subscription to notifications for Admin (recipientRole == 'admin')
  */
@@ -694,7 +714,7 @@ export function subscribeAdminNotifications(
     where('recipientRole', '==', 'admin'),
     limit(50)
   );
-
+ 
   return onSnapshot(
     q,
     (snapshot) => {
@@ -717,7 +737,7 @@ export function subscribeAdminNotifications(
     }
   );
 }
-
+ 
 /**
  * Mark a notification as read
  */
@@ -730,7 +750,7 @@ export async function markNotificationAsRead(notificationId: string): Promise<vo
     console.warn('Failed to mark notification as read:', err);
   }
 }
-
+ 
 /**
  * Mark all notifications as read
  */
@@ -740,7 +760,7 @@ export async function markAllNotificationsAsRead(notificationIds: string[]): Pro
   );
   await Promise.all(updates);
 }
-
+ 
 /**
  * Delete a notification
  */
@@ -751,14 +771,14 @@ export async function deleteNotification(notificationId: string): Promise<void> 
     console.warn('Failed to delete notification:', err);
   }
 }
-
+ 
 /**
  * Evidence image upload with Storage path storage (Issue 2)
  */
 export const MAX_EVIDENCE_IMAGES = 2;
 const MAX_EVIDENCE_INPUT_BYTES = 15 * 1024 * 1024; // ไฟล์ต้นฉบับ (ถูกย่อก่อนบันทึก)
 const MAX_EVIDENCE_DATAURL_CHARS = 250 * 1024; // ขนาดหลังย่อ ~250KB (Firestore จำกัด 1MB/เอกสาร)
-
+ 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -768,7 +788,7 @@ function loadImage(file: File): Promise<HTMLImageElement> {
     img.src = url;
   });
 }
-
+ 
 /**
  * ย่อรูปในเบราว์เซอร์แล้วคืนค่าเป็น data URL (JPEG) เพื่อเก็บใน Firestore โดยไม่ใช้ Cloud Storage
  * (ชื่อฟังก์ชัน/พารามิเตอร์คงเดิมเพื่อไม่ให้ต้องแก้ส่วนอื่น)
@@ -781,21 +801,21 @@ export async function uploadEvidenceImage(
   if (file.size > MAX_EVIDENCE_INPUT_BYTES) {
     throw new Error('ขนาดไฟล์ต้องไม่เกิน 15MB');
   }
-
+ 
   const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (!validTypes.includes(file.type)) {
     throw new Error('รองรับเฉพาะไฟล์รูปภาพ (JPEG, PNG, WebP) เท่านั้น');
   }
-
+ 
   const img = await loadImage(file);
   let maxSide = 1280;
   let quality = 0.8;
-
+ 
   for (let attempt = 0; attempt < 12; attempt++) {
     const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
     const w = Math.max(1, Math.round(img.width * scale));
     const h = Math.max(1, Math.round(img.height * scale));
-
+ 
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -804,17 +824,17 @@ export async function uploadEvidenceImage(
     ctx.fillStyle = '#ffffff'; // กันพื้นหลังโปร่งใสกลายเป็นสีดำ
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
-
+ 
     const dataUrl = canvas.toDataURL('image/jpeg', quality);
     if (dataUrl.length <= MAX_EVIDENCE_DATAURL_CHARS) return dataUrl;
-
+ 
     if (quality > 0.5) quality -= 0.1;
     else maxSide = Math.round(maxSide * 0.8);
   }
-
+ 
   throw new Error('ไม่สามารถย่อรูปให้เล็กพอได้ กรุณาเลือกรูปอื่น');
 }
-
+ 
 /** เปิดรูปในแท็บใหม่ (เบราว์เซอร์บล็อก data: URL ที่เปิดตรง ๆ จึงแปลงเป็น blob ก่อน) */
 export async function openEvidenceImage(url: string): Promise<void> {
   if (!url) return;
@@ -827,7 +847,7 @@ export async function openEvidenceImage(url: string): Promise<void> {
   window.open(blobUrl, '_blank', 'noopener,noreferrer');
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
-
+ 
 /**
  * Resolve evidence image URL on demand (supports backward compatibility with URLs and paths)
  */
