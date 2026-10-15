@@ -13,11 +13,19 @@ import {
   runTransaction,
   setDoc,
   getCountFromServer,
+  deleteDoc,
   Timestamp 
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage, handleFirestoreError, OperationType } from '../lib/firebase/client.ts';
-import { ExerciseRecordDoc, RecordCommentDoc, ExerciseFilter, ExerciseStatus, ExerciseHistoryEntry } from '../types/index.ts';
+import { 
+  ExerciseRecordDoc, 
+  RecordCommentDoc, 
+  ExerciseFilter, 
+  ExerciseStatus, 
+  ExerciseHistoryEntry,
+  AppNotificationDoc 
+} from '../types/index.ts';
 
 // In-flight submission guard for current tab
 const inFlightOperations = new Set<string>();
@@ -352,6 +360,13 @@ export async function updateExerciseRecord(
   expectedLastUpdated: string
 ): Promise<void> {
   const path = `exerciseRecords/${recordId}`;
+  let notifyAdminPayload: {
+    participantId: string;
+    participantUid: string;
+    activityName: string;
+    exerciseDate: string;
+  } | null = null;
+
   try {
     await runTransaction(db, async (transaction) => {
       const recordRef = doc(db, 'exerciseRecords', recordId);
@@ -362,6 +377,12 @@ export async function updateExerciseRecord(
       }
 
       const currentData = sfDoc.data();
+
+      // Guard: Participant cannot edit records that are already reviewed
+      if (currentData.status === 'approved' || currentData.status === 'rejected' || currentData.reviewedAt) {
+        throw new Error('บันทึกนี้ผ่านการตรวจประเมินแล้ว ไม่สามารถแก้ไขได้');
+      }
+
       const currentUpdatedAt = currentData.updatedAt?.toDate
         ? currentData.updatedAt.toDate().toISOString()
         : currentData.updatedAt;
@@ -407,9 +428,39 @@ export async function updateExerciseRecord(
       }
 
       transaction.update(recordRef, updatePayload);
+
+      notifyAdminPayload = {
+        participantId: currentData.participantId || 'ผู้เข้าร่วม',
+        participantUid: currentData.participantUid,
+        activityName: updates.activityName || currentData.activityName || 'กิจกรรม',
+        exerciseDate: updates.exerciseDate || currentData.exerciseDate || '',
+      };
     });
+
+    // Notify admins that the record was edited by participant
+    if (notifyAdminPayload) {
+      const p = notifyAdminPayload as { participantId: string; participantUid: string; activityName: string; exerciseDate: string };
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          recipientRole: 'admin',
+          recipientUid: 'admin',
+          type: 'record_edited',
+          title: 'มีการแก้ไขบันทึกการออกกำลังกาย',
+          message: `ผู้เข้าร่วม ${p.participantId} ได้แก้ไขบันทึก "${p.activityName}" วันที่ ${p.exerciseDate}`,
+          recordId,
+          activityName: p.activityName,
+          actorUid: p.participantUid,
+          actorName: p.participantId,
+          actorRole: 'student',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      } catch (notifErr) {
+        console.warn('Could not post admin notification for edited record:', notifErr);
+      }
+    }
   } catch (error: any) {
-    if (error.message && error.message.includes('มีการเปลี่ยนแปลงจากอีกอุปกรณ์')) {
+    if (error.message && (error.message.includes('มีการเปลี่ยนแปลงจากอีกอุปกรณ์') || error.message.includes('ผ่านการตรวจประเมินแล้ว'))) {
       throw error;
     }
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -431,11 +482,13 @@ export async function reviewExerciseRecord(
     const snap = await getDoc(recordRef);
     const currentData = snap.data();
 
-    const existingHistory: ExerciseHistoryEntry[] = currentData && Array.isArray(currentData.history)
+    if (!currentData) {
+      throw new Error('ไม่พบบันทึกการออกกำลังกายนี้');
+    }
+
+    const existingHistory: ExerciseHistoryEntry[] = Array.isArray(currentData.history)
       ? [...currentData.history]
-      : currentData
-      ? getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc)
-      : [];
+      : getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc);
 
     const labelMap: Record<string, string> = {
       approved: 'ผ่านการตรวจประเมินโดยทีมวิจัย',
@@ -462,6 +515,31 @@ export async function reviewExerciseRecord(
       updatedAt: serverTimestamp(),
       history: nextHistory,
     });
+
+    // Notify participant of review result
+    try {
+      const statusThai: Record<string, string> = {
+        approved: 'ผ่านการตรวจประเมินแล้ว',
+        needs_revision: 'ขอให้แก้ไขข้อมูล',
+        rejected: 'ไม่ผ่านเกณฑ์การประเมิน',
+      };
+      await addDoc(collection(db, 'notifications'), {
+        recipientUid: currentData.participantUid,
+        recipientRole: 'student',
+        type: 'admin_review',
+        title: 'ผลการตรวจบันทึกการออกกำลังกาย',
+        message: `บันทึก "${currentData.activityName}": ${statusThai[status] || status}${reviewNotes ? ` (${reviewNotes.slice(0, 100)})` : ''}`,
+        recordId,
+        activityName: currentData.activityName,
+        actorUid: reviewerUid,
+        actorName: 'ผู้ตรวจประเมินโครงการ',
+        actorRole: 'admin',
+        read: false,
+        createdAt: serverTimestamp(),
+      });
+    } catch (notifErr) {
+      console.warn('Failed to notify student of review:', notifErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -477,16 +555,200 @@ export async function addRecordComment(comment: {
   authorName: string;
   authorRole: 'admin' | 'student';
   message: string;
+  activityName?: string;
 }): Promise<string> {
   const colPath = 'recordComments';
   try {
     const docRef = await addDoc(collection(db, colPath), {
-      ...comment,
+      recordId: comment.recordId,
+      participantUid: comment.participantUid,
+      authorUid: comment.authorUid,
+      authorName: comment.authorName,
+      authorRole: comment.authorRole,
+      message: comment.message,
       createdAt: serverTimestamp(),
     });
+
+    // If admin commented, notify student
+    if (comment.authorRole === 'admin') {
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          recipientUid: comment.participantUid,
+          recipientRole: 'student',
+          type: 'admin_comment',
+          title: 'มีความคิดเห็นใหม่จากผู้ตรวจประเมิน',
+          message: `ผู้ตรวจประเมินแสดงความคิดเห็น: "${comment.message.slice(0, 120)}"`,
+          recordId: comment.recordId,
+          activityName: comment.activityName || '',
+          actorUid: comment.authorUid,
+          actorName: comment.authorName || 'ผู้ตรวจประเมิน',
+          actorRole: 'admin',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('Failed to send comment notification to student:', err);
+      }
+    }
+
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, colPath);
+  }
+}
+
+/**
+ * Admin deletes a reviewed exercise record.
+ * Allowed ONLY if record has been reviewed (status is approved, rejected, or reviewedAt is not null).
+ */
+export async function deleteExerciseRecordByAdmin(
+  recordId: string,
+  record: ExerciseRecordDoc
+): Promise<void> {
+  const isReviewed = record.reviewedAt != null || record.status === 'approved' || record.status === 'rejected';
+  if (!isReviewed) {
+    throw new Error('ไม่สามารถลบได้: ระบบอนุญาตให้แอดมินลบได้เฉพาะบันทึกที่ผ่านการตรวจแล้วเท่านั้น');
+  }
+
+  const path = `exerciseRecords/${recordId}`;
+  try {
+    await deleteDoc(doc(db, 'exerciseRecords', recordId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+/**
+ * Student cancels (deletes) their own unreviewed record.
+ * Allowed ONLY when record has NOT yet been reviewed.
+ */
+export async function cancelExerciseRecordByStudent(
+  recordId: string,
+  studentUid: string,
+  record: ExerciseRecordDoc
+): Promise<void> {
+  const isReviewed = record.reviewedAt != null || record.status === 'approved' || record.status === 'rejected';
+  if (isReviewed) {
+    throw new Error('ไม่สามารถยกเลิกได้: บันทึกนี้ขึ้นสถานะว่าตรวจแล้ว');
+  }
+  if (record.participantUid !== studentUid) {
+    throw new Error('ไม่มีสิทธิ์ยกเลิกบันทึกนี้');
+  }
+
+  const path = `exerciseRecords/${recordId}`;
+  try {
+    await deleteDoc(doc(db, 'exerciseRecords', recordId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+/**
+ * Realtime subscription to notifications for Student (by recipientUid)
+ */
+export function subscribeStudentNotifications(
+  studentUid: string,
+  onUpdate: (notifications: AppNotificationDoc[]) => void,
+  onError: (err: Error) => void
+) {
+  const colPath = 'notifications';
+  const q = query(
+    collection(db, colPath),
+    where('recipientUid', '==', studentUid),
+    limit(50)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: AppNotificationDoc[] = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        items.push({
+          id: d.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt || new Date().toISOString(),
+        } as AppNotificationDoc);
+      });
+      // Sort client side to avoid index requirement
+      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      onUpdate(items);
+    },
+    (error) => {
+      console.warn('Student notifications subscription error:', error);
+      onError(error);
+    }
+  );
+}
+
+/**
+ * Realtime subscription to notifications for Admin (recipientRole == 'admin')
+ */
+export function subscribeAdminNotifications(
+  onUpdate: (notifications: AppNotificationDoc[]) => void,
+  onError: (err: Error) => void
+) {
+  const colPath = 'notifications';
+  const q = query(
+    collection(db, colPath),
+    where('recipientRole', '==', 'admin'),
+    limit(50)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: AppNotificationDoc[] = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        items.push({
+          id: d.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt || new Date().toISOString(),
+        } as AppNotificationDoc);
+      });
+      // Sort client side to avoid index requirement
+      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      onUpdate(items);
+    },
+    (error) => {
+      console.warn('Admin notifications subscription error:', error);
+      onError(error);
+    }
+  );
+}
+
+/**
+ * Mark a notification as read
+ */
+export async function markNotificationAsRead(notificationId: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'notifications', notificationId), {
+      read: true,
+    });
+  } catch (err) {
+    console.warn('Failed to mark notification as read:', err);
+  }
+}
+
+/**
+ * Mark all notifications as read
+ */
+export async function markAllNotificationsAsRead(notificationIds: string[]): Promise<void> {
+  const updates = notificationIds.map((id) =>
+    updateDoc(doc(db, 'notifications', id), { read: true }).catch(() => {})
+  );
+  await Promise.all(updates);
+}
+
+/**
+ * Delete a notification
+ */
+export async function deleteNotification(notificationId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'notifications', notificationId));
+  } catch (err) {
+    console.warn('Failed to delete notification:', err);
   }
 }
 
