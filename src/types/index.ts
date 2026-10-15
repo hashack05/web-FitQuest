@@ -34,6 +34,15 @@ export type ExerciseStatus = 'draft' | 'pending' | 'approved' | 'needs_revision'
 
 export type ExerciseIntensity = 'light' | 'moderate' | 'vigorous';
 
+export interface ExerciseHistoryEntry {
+  action: 'created_draft' | 'submitted' | 'updated' | 'resubmitted' | 'approved' | 'needs_revision' | 'rejected' | string;
+  actionLabel: string;
+  actorRole: 'student' | 'admin' | 'system';
+  actorName: string;
+  timestamp: string;
+  notes?: string;
+}
+
 export interface ExerciseRecordDoc {
   id?: string;
   participantUid: string;
@@ -60,6 +69,8 @@ export interface ExerciseRecordDoc {
   createdAt: string;
   updatedAt: string;
   createdByUid: string;
+
+  history?: ExerciseHistoryEntry[];
 }
 
 export interface RecordCommentDoc {
@@ -116,4 +127,22 @@ export interface ExerciseFilter {
   searchQuery?: string;
   dateFrom?: string;
   dateTo?: string;
+}
+
+export type NotificationType = 'record_edited' | 'admin_comment' | 'admin_review';
+
+export interface AppNotificationDoc {
+  id?: string;
+  recipientUid: string;
+  recipientRole: 'admin' | 'student';
+  type: NotificationType;
+  title: string;
+  message: string;
+  recordId: string;
+  activityName?: string;
+  actorUid: string;
+  actorName: string;
+  actorRole: 'admin' | 'student';
+  read: boolean;
+  createdAt: string;
 }
