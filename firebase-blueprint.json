@@ -132,6 +132,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["participantId", "uid", "pinHash", "updatedAt"]
+    },
+    "notification": {
+      "title": "Notification",
+      "description": "User notification for record edits, reviews, and admin comments",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string", "maxLength": 128 },
+        "recipientUid": { "type": "string", "maxLength": 128 },
+        "recipientRole": { "type": "string", "enum": ["admin", "student"] },
+        "type": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 500 },
+        "recordId": { "type": "string", "maxLength": 128 },
+        "activityName": { "type": "string", "maxLength": 128 },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 128 },
+        "actorRole": { "type": "string", "enum": ["admin", "student"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recipientUid", "recipientRole", "type", "title", "message", "recordId", "actorUid", "actorName", "actorRole", "read", "createdAt"]
     }
   },
   "firestore": {
@@ -166,6 +187,10 @@
     "/privateStudentCredentials/{credentialId}": {
       "schema": { "$ref": "#/entities/privateStudentCredential" },
       "description": "Server-only credential hashes and lockout guards"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/notification" },
+      "description": "Real-time user notifications for record edits, reviews, and comments"
     }
   }
 }
