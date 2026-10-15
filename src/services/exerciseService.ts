@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage, handleFirestoreError, OperationType } from '../lib/firebase/client.ts';
-import { ExerciseRecordDoc, RecordCommentDoc, ExerciseFilter, ExerciseStatus } from '../types/index.ts';
+import { ExerciseRecordDoc, RecordCommentDoc, ExerciseFilter, ExerciseStatus, ExerciseHistoryEntry } from '../types/index.ts';
 
 // In-flight submission guard for current tab
 const inFlightOperations = new Set<string>();
@@ -199,7 +199,78 @@ export function subscribeRecordComments(
 }
 
 /**
- * Create new exercise record with transaction-backed duplicate prevention (Issue 7)
+ * Synthesizes or retrieves chronological transaction history for an exercise record
+ */
+export function getRecordTimeline(record: ExerciseRecordDoc): ExerciseHistoryEntry[] {
+  if (record.history && Array.isArray(record.history) && record.history.length > 0) {
+    return record.history;
+  }
+
+  // Synthesize timeline from factual fields for backwards compatibility with existing records
+  const timeline: ExerciseHistoryEntry[] = [];
+  const baseTime = record.createdAt || record.exerciseDate || new Date().toISOString();
+
+  if (record.status === 'draft') {
+    timeline.push({
+      action: 'created_draft',
+      actionLabel: 'บันทึกฉบับร่าง',
+      actorRole: 'student',
+      actorName: record.participantId || 'ผู้เข้าร่วม',
+      timestamp: baseTime,
+      notes: `บันทึกฉบับร่างกิจกรรม ${record.activityName} (${record.durationMinutes} นาที)`,
+    });
+  } else {
+    timeline.push({
+      action: 'submitted',
+      actionLabel: 'บันทึกและส่งตรวจการออกกำลังกาย',
+      actorRole: 'student',
+      actorName: record.participantId || 'ผู้เข้าร่วม',
+      timestamp: record.submittedAt || baseTime,
+      notes: `บันทึกกิจกรรม ${record.activityName} (${record.durationMinutes} นาที)`,
+    });
+  }
+
+  // If resubmitted or updated
+  if (record.submittedAt && record.createdAt && record.submittedAt !== record.createdAt) {
+    timeline.push({
+      action: 'resubmitted',
+      actionLabel: 'ส่งตรวจใหม่หลังจากแก้ไข',
+      actorRole: 'student',
+      actorName: record.participantId || 'ผู้เข้าร่วม',
+      timestamp: record.submittedAt,
+    });
+  } else if (record.updatedAt && record.createdAt && record.updatedAt !== record.createdAt && !record.reviewedAt) {
+    timeline.push({
+      action: 'updated',
+      actionLabel: 'แก้ไขรายละเอียดกิจกรรม',
+      actorRole: 'student',
+      actorName: record.participantId || 'ผู้เข้าร่วม',
+      timestamp: record.updatedAt,
+    });
+  }
+
+  // If reviewed by researcher
+  if (record.reviewedAt) {
+    const labelMap: Record<string, string> = {
+      approved: 'ผ่านการตรวจประเมินโดยทีมวิจัย',
+      needs_revision: 'ผู้ตรวจประเมินแจ้งข้อเสนอแนะให้แก้ไข',
+      rejected: 'ไม่ผ่านเกณฑ์การประเมิน',
+    };
+    timeline.push({
+      action: record.status,
+      actionLabel: labelMap[record.status] || `ผลการตรวจ: ${record.status}`,
+      actorRole: 'admin',
+      actorName: 'ผู้ตรวจประเมินโครงการ',
+      timestamp: record.reviewedAt,
+      notes: record.reviewNotes || undefined,
+    });
+  }
+
+  return timeline;
+}
+
+/**
+ * Create new exercise record with transaction-backed duplicate prevention and initial transaction history
  */
 export async function createExerciseRecord(record: {
   participantUid: string;
@@ -224,8 +295,19 @@ export async function createExerciseRecord(record: {
   const colPath = 'exerciseRecords';
 
   try {
-    // ไม่ใช้ transaction.get() เพราะ rules บล็อกการอ่านเอกสารที่ยังไม่มีอยู่ (resource == null)
-    // ใช้ submissionId เป็น doc ID เพื่อกันบันทึกซ้ำ (กดซ้ำ = เขียน ID เดิม)
+    const nowIso = new Date().toISOString();
+    const isPending = record.status === 'pending';
+
+    // Transaction history entry for this submission
+    const initialHistoryEntry: ExerciseHistoryEntry = {
+      action: isPending ? 'submitted' : 'created_draft',
+      actionLabel: isPending ? 'บันทึกและส่งตรวจการออกกำลังกาย' : 'บันทึกฉบับร่าง',
+      actorRole: 'student',
+      actorName: record.participantId || 'ผู้เข้าร่วม',
+      timestamp: nowIso,
+      notes: `กิจกรรม: ${record.activityName} (${record.durationMinutes} นาที, ระดับ ${record.intensity})`,
+    };
+
     const targetDocRef = record.submissionId
       ? doc(db, colPath, record.submissionId)
       : doc(collection(db, colPath));
@@ -242,13 +324,14 @@ export async function createExerciseRecord(record: {
       notes: record.notes || '',
       evidenceImages: record.evidenceImages || [],
       status: record.status,
-      submittedAt: record.status === 'pending' ? serverTimestamp() : null,
+      submittedAt: isPending ? serverTimestamp() : null,
       reviewedAt: null,
       reviewedByUid: null,
       reviewNotes: '',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       createdByUid: record.participantUid,
+      history: [initialHistoryEntry],
     });
 
     const resultDocId = targetDocRef.id;
@@ -261,7 +344,7 @@ export async function createExerciseRecord(record: {
 }
 
 /**
- * Update exercise record with ATOMIC Firestore runTransaction (Issue 6)
+ * Update exercise record with ATOMIC Firestore runTransaction and append to transaction history
  */
 export async function updateExerciseRecord(
   recordId: string,
@@ -288,9 +371,35 @@ export async function updateExerciseRecord(
         throw new Error('ข้อมูลนี้มีการเปลี่ยนแปลงจากอีกอุปกรณ์ กรุณาตรวจสอบข้อมูลล่าสุดก่อนบันทึก');
       }
 
+      const nowIso = new Date().toISOString();
+      const existingHistory: ExerciseHistoryEntry[] = Array.isArray(currentData.history)
+        ? [...currentData.history]
+        : getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc);
+
+      const isResubmit = currentData.status === 'needs_revision' && updates.status === 'pending';
+      const isFirstSubmit = currentData.status === 'draft' && updates.status === 'pending';
+      const actionType = isResubmit ? 'resubmitted' : isFirstSubmit ? 'submitted' : 'updated';
+      const actionLabel = isResubmit
+        ? 'แก้ไขและส่งตรวจใหม่'
+        : isFirstSubmit
+        ? 'ส่งตรวจการออกกำลังกาย'
+        : 'แก้ไขรายละเอียดกิจกรรม';
+
+      const updateEntry: ExerciseHistoryEntry = {
+        action: actionType,
+        actionLabel,
+        actorRole: 'student',
+        actorName: currentData.participantId || 'ผู้เข้าร่วม',
+        timestamp: nowIso,
+        notes: updates.notes ? `รายละเอียด: ${updates.notes}` : undefined,
+      };
+
+      const nextHistory = [...existingHistory, updateEntry].slice(-50);
+
       const updatePayload: Record<string, any> = {
         ...updates,
         updatedAt: serverTimestamp(),
+        history: nextHistory,
       };
 
       if (updates.status === 'pending') {
@@ -308,7 +417,7 @@ export async function updateExerciseRecord(
 }
 
 /**
- * Admin review mutation
+ * Admin review mutation and transaction history logging
  */
 export async function reviewExerciseRecord(
   recordId: string,
@@ -318,12 +427,40 @@ export async function reviewExerciseRecord(
 ): Promise<void> {
   const path = `exerciseRecords/${recordId}`;
   try {
-    await updateDoc(doc(db, 'exerciseRecords', recordId), {
+    const recordRef = doc(db, 'exerciseRecords', recordId);
+    const snap = await getDoc(recordRef);
+    const currentData = snap.data();
+
+    const existingHistory: ExerciseHistoryEntry[] = currentData && Array.isArray(currentData.history)
+      ? [...currentData.history]
+      : currentData
+      ? getRecordTimeline({ ...currentData, id: recordId } as ExerciseRecordDoc)
+      : [];
+
+    const labelMap: Record<string, string> = {
+      approved: 'ผ่านการตรวจประเมินโดยทีมวิจัย',
+      needs_revision: 'ผู้ตรวจประเมินแจ้งข้อเสนอแนะให้แก้ไข',
+      rejected: 'ไม่ผ่านเกณฑ์การประเมิน',
+    };
+
+    const reviewEntry: ExerciseHistoryEntry = {
+      action: status,
+      actionLabel: labelMap[status] || `ปรับสถานะเป็น ${status}`,
+      actorRole: 'admin',
+      actorName: 'ผู้ตรวจประเมินโครงการ',
+      timestamp: new Date().toISOString(),
+      notes: reviewNotes || undefined,
+    };
+
+    const nextHistory = [...existingHistory, reviewEntry].slice(-50);
+
+    await updateDoc(recordRef, {
       status,
       reviewNotes: reviewNotes || '',
       reviewedAt: serverTimestamp(),
       reviewedByUid: reviewerUid,
       updatedAt: serverTimestamp(),
+      history: nextHistory,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
