@@ -56,7 +56,8 @@
         "reviewNotes": { "type": "string", "maxLength": 1000 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "createdByUid": { "type": "string", "maxLength": 128 }
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "history": { "type": "string", "maxLength": 5000, "description": "Transaction history audit trail entries" }
       },
       "required": ["participantUid", "participantId", "activityType", "activityName", "exerciseDate", "durationMinutes", "intensity", "status", "createdAt", "updatedAt", "createdByUid"]
     },
