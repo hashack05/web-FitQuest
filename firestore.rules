@@ -110,7 +110,8 @@ service cloud.firestore {
         // Case A: Admin Review (restricted to review fields only)
         (
           isAdmin()
-          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewNotes', 'reviewedAt', 'reviewedByUid', 'updatedAt'])
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewNotes', 'reviewedAt', 'reviewedByUid', 'updatedAt', 'history'])
+          && (!('history' in incoming()) || (incoming().history is list && incoming().history.size() <= 50))
           && incoming().status in ['approved', 'needs_revision', 'rejected', 'pending']
           && incoming().participantUid == existing().participantUid
           && incoming().createdByUid == existing().createdByUid
